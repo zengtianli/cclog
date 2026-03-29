@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cclog"
+version = "0.1.0"
+description = "Browse, summarize, and review your Claude Code sessions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "tianli" }]
+keywords = ["claude-code", "session", "log", "review", "summary"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Documentation",
+]
+dependencies = []
+
+[project.optional-dependencies]
+api = ["anthropic>=0.40.0"]
+dev = ["pytest>=7.0", "ruff>=0.4.0"]
+all = ["cclog[api,dev]"]
+
+[project.scripts]
+cclog = "cclog.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cclog"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

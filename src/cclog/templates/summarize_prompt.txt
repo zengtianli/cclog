@@ -1,0 +1,28 @@
+You are analyzing a Claude Code session transcript. Extract structured information and return ONLY valid JSON (no markdown fences, no extra text).
+
+Session metadata:
+- Project: ${project}
+- Date: ${date}
+- Duration: ${duration} minutes
+- Messages: ${message_count}
+- Tools used: ${tools}
+
+Conversation transcript (may be truncated):
+---
+${conversation}
+---
+
+Return a JSON object with these fields:
+{
+  "summary": "One concise sentence describing what was done in this session (in the same language as the conversation)",
+  "category": "One of: development, configuration, debugging, writing, analysis, learning, discussion, organization",
+  "outcomes": "What was accomplished (1-2 sentences, same language as conversation)",
+  "learnings": ["Key insight or technique learned (if any)", "Another learning (if any)"]
+}
+
+Rules:
+- summary and outcomes should be in the same language as the conversation
+- category must be one of the 8 English values listed above
+- learnings array can be empty [] if nothing notable was learned
+- Keep summary under 100 characters
+- Return ONLY the JSON object, nothing else
