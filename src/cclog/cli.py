@@ -58,6 +58,18 @@ def main(argv: list[str] | None = None) -> int:
     p_digest.add_argument("--week", action="store_true", help="Generate weekly digest")
     p_digest.set_defaults(func=cmd_digest)
 
+    # --- clean ---
+    p_clean = subparsers.add_parser("clean", help="Find and remove junk sessions")
+    p_clean.add_argument("--execute", action="store_true", help="Actually delete (default: dry-run preview)")
+    p_clean.add_argument("--aggressive", action="store_true", help="Also remove sessions ≤2 minutes")
+    p_clean.set_defaults(func=cmd_clean)
+
+    # --- delete ---
+    p_del = subparsers.add_parser("delete", help="Delete a specific session")
+    p_del.add_argument("session_id", help="Session ID (or prefix)")
+    p_del.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    p_del.set_defaults(func=cmd_delete)
+
     # --- site ---
     p_site = subparsers.add_parser("site", help="Generate static HTML site")
     p_site.add_argument("--output", "-o", type=str, default="./cclog-site", help="Output directory")
@@ -245,6 +257,76 @@ def cmd_digest(args) -> int:
             return 0
         print(format_digest_markdown(digest))
 
+    return 0
+
+
+def cmd_clean(args) -> int:
+    config = load_config()
+    indexer = Indexer(config)
+
+    junk = indexer.find_junk_sessions(aggressive=args.aggressive)
+
+    if not junk:
+        print("No junk sessions found.")
+        indexer.close()
+        return 0
+
+    mode = "aggressive" if args.aggressive else "standard"
+    print(f"Found {len(junk)} junk session(s) ({mode} mode):\n")
+    print(f"{'Date':<12} {'Dur':>5} {'Msgs':>5} {'Project':<22} {'Title'}")
+    print("-" * 80)
+
+    for s in junk:
+        date_str = s.start_time.strftime("%Y-%m-%d") if s.start_time else "-"
+        title = (s.title or "(empty)")[:35]
+        print(f"{date_str:<12} {s.duration_minutes:>4}m {s.message_count:>5} {s.project[:21]:<22} {title}")
+
+    if not args.execute:
+        print(f"\nDry run: {len(junk)} sessions would be deleted.")
+        print("Run with --execute to actually delete.")
+        indexer.close()
+        return 0
+
+    # Execute deletion
+    deleted = 0
+    for s in junk:
+        if indexer.delete_session(s.session_id, delete_files=True):
+            deleted += 1
+
+    indexer.close()
+    print(f"\nDeleted {deleted}/{len(junk)} sessions (index + files).")
+    return 0
+
+
+def cmd_delete(args) -> int:
+    config = load_config()
+    indexer = Indexer(config)
+
+    session = indexer.get_session(args.session_id)
+    if not session:
+        print(f"Session not found: {args.session_id}")
+        indexer.close()
+        return 1
+
+    print(f"Session:  {session.session_id}")
+    print(f"Project:  {session.project}")
+    print(f"Date:     {session.start_time.strftime('%Y-%m-%d %H:%M') if session.start_time else '-'}")
+    print(f"Title:    {session.title or '(empty)'}")
+    print(f"File:     {session.file_path}")
+
+    if not args.yes:
+        confirm = input("\nDelete this session? [y/N] ").strip().lower()
+        if confirm != "y":
+            print("Cancelled.")
+            indexer.close()
+            return 0
+
+    if indexer.delete_session(session.session_id, delete_files=True):
+        print("Deleted.")
+    else:
+        print("Failed to delete.")
+
+    indexer.close()
     return 0
 
 

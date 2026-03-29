@@ -324,6 +324,73 @@ class Indexer:
         )
         self.conn.commit()
 
+    # --- Delete / Clean ---
+
+    _JUNK_TITLES = {"hi", "hello", "test", "你好", "config", "init", "hey", "hola"}
+
+    def find_junk_sessions(self, aggressive: bool = False) -> list[Session]:
+        """Find sessions matching junk criteria.
+
+        Default: empty/test titles + zero-duration with ≤5 messages.
+        Aggressive: also includes sessions ≤2 minutes.
+        """
+        all_sessions = self.list_sessions(limit=10000)
+        junk = []
+
+        for s in all_sessions:
+            title = (s.title or "").strip().lower()
+
+            # Rule 1: completely empty title + short
+            if not title and s.duration_minutes <= 5:
+                junk.append(s)
+                continue
+
+            # Rule 2: known test titles + short duration + few messages
+            if title in self._JUNK_TITLES and s.duration_minutes <= 5 and s.message_count <= 20:
+                junk.append(s)
+                continue
+
+            # Rule 3: zero duration + very few messages (abandoned sessions)
+            if s.duration_minutes == 0 and s.message_count <= 3:
+                junk.append(s)
+                continue
+
+            # Rule 4 (aggressive): ≤2 min and ≤10 messages
+            if aggressive and s.duration_minutes <= 2 and s.message_count <= 10:
+                junk.append(s)
+                continue
+
+        return junk
+
+    def delete_session(self, session_id: str, delete_files: bool = True) -> bool:
+        """Delete a session from the index and optionally its .jsonl file.
+
+        Returns True if the session was found and deleted.
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return False
+
+        # Delete from SQLite
+        self.conn.execute("DELETE FROM sessions WHERE session_id = ?", (session.session_id,))
+        self.conn.commit()
+
+        if delete_files and session.file_path:
+            fp = Path(session.file_path)
+
+            # Delete .jsonl file
+            if fp.exists():
+                fp.unlink()
+
+            # Delete associated subdirectory (subagents/, tool-results/)
+            subdir = fp.parent / fp.stem
+            if subdir.is_dir():
+                import shutil
+
+                shutil.rmtree(subdir, ignore_errors=True)
+
+        return True
+
 
 def _row_to_session(row: sqlite3.Row) -> Session:
     """Convert a database row to a Session object."""
