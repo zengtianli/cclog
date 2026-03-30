@@ -24,6 +24,8 @@ Browse, summarize, and review your [Claude Code](https://claude.ai/code) session
 | `cclog delete <id>` | Delete a single session from index and disk |
 | `cclog site` | Generate a browsable static HTML site of all sessions |
 
+![cclog demo](docs/screenshots/demo.svg)
+
 ---
 
 ## Install
