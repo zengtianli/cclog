@@ -24,7 +24,7 @@
 | `cclog delete <id>` | 从索引和磁盘删除指定会话 |
 | `cclog site` | 生成可在浏览器中浏览的静态 HTML 网站 |
 
-![cclog demo](docs/screenshots/demo.svg)
+![cclog demo](docs/screenshots/demo.png)
 
 ---
 
