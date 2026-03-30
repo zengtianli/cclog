@@ -12,7 +12,7 @@ from cclog.indexer import Indexer
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def generate_site(config: Config, output_dir: Path):
+def generate_site(config: Config, output_dir: Path, api_mode: bool = False):
     """Generate the complete static site."""
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "sessions").mkdir(exist_ok=True)
@@ -25,7 +25,7 @@ def generate_site(config: Config, output_dir: Path):
     stats = indexer.get_stats()
 
     # Generate pages
-    _generate_index(sessions, stats, output_dir)
+    _generate_index(sessions, stats, output_dir, api_mode=api_mode)
     _generate_session_pages(sessions, output_dir)
     _generate_digest_pages(indexer, sessions, config, output_dir)
 
@@ -40,7 +40,7 @@ def generate_site(config: Config, output_dir: Path):
     print(f"  Index + digests")
 
 
-def _generate_index(sessions: list, stats: dict, output_dir: Path):
+def _generate_index(sessions: list, stats: dict, output_dir: Path, api_mode: bool = False):
     """Generate the main index.html dashboard."""
     # Build session data for JS filtering
     session_data = []
@@ -56,6 +56,9 @@ def _generate_index(sessions: list, stats: dict, output_dir: Path):
             "summary": s.summary or "",
             "title": s.title or "",
             "model": s.model or "",
+            "has_summary": bool(s.summary),
+            "outcomes": s.outcomes or "",
+            "learnings": s.learnings or [],
         })
 
     # Collect unique projects and categories
@@ -124,16 +127,18 @@ def _generate_index(sessions: list, stats: dict, output_dir: Path):
     <table class="session-table">
       <thead>
         <tr>
-          <th>Date</th>
+          <th class="sortable" data-sort="date">Date<span class="sort-arrow"> &#9660;</span></th>
           <th>Project</th>
-          <th class="duration">Duration</th>
-          <th class="msgs">Msgs</th>
+          <th class="sortable duration" data-sort="duration">Duration<span class="sort-arrow"></span></th>
+          <th class="sortable msgs" data-sort="msgs">Msgs<span class="sort-arrow"></span></th>
           <th>Category</th>
           <th>Summary</th>
+          {'<th class="actions"><input type="checkbox" id="selectAll" title="全选"></th>' if api_mode else ''}
         </tr>
       </thead>
       <tbody id="sessionBody"></tbody>
     </table>
+    {'<div class="bulk-bar" id="bulkBar" style="display:none"><span id="selectedCount">0</span> 个已选 <button class="btn-bulk-delete" id="bulkDeleteBtn">批量删除</button></div>' if api_mode else ''}
   </main>
 
   <footer>
@@ -143,27 +148,112 @@ def _generate_index(sessions: list, stats: dict, output_dir: Path):
   </footer>
 
   <script>
-    const sessions = {json.dumps(session_data, ensure_ascii=False)};
+    let sessions = {'[]' if api_mode else json.dumps(session_data, ensure_ascii=False)};
+    const API_MODE = {'true' if api_mode else 'false'};
+    let sortState = {{ key: 'date', dir: 'desc' }};
+    let currentFiltered = sessions;
+
+    function updateStats() {{
+      const cards = document.querySelectorAll('.stat-card .value');
+      cards[0].textContent = sessions.length;
+      cards[1].textContent = new Set(sessions.map(s => s.project)).size;
+      cards[2].textContent = Math.round(sessions.reduce((a, s) => a + (s.duration || 0), 0) / 60);
+      cards[3].textContent = sessions.filter(s => s.has_summary).length;
+    }}
+
+    // API mode: load sessions from external JSON file
+    if (API_MODE) {{
+      fetch('sessions.json').then(r => r.json()).then(data => {{
+        sessions = data;
+        currentFiltered = sessions;
+        applyFilters();
+        updateSortHeaders();
+        updateStats();
+      }});
+    }}
+
+    const CAT_CLASS = {{
+      'development': 'tag-dev', 'configuration': 'tag-config',
+      'debugging': 'tag-debug', 'writing': 'tag-writing',
+      'analysis': 'tag-analysis', 'learning': 'tag-learning',
+      'organization': 'tag-org', 'discussion': 'tag-dev'
+    }};
+
+    function esc(s) {{
+      return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
+    }}
+
+    function sortData(data) {{
+      const {{ key, dir }} = sortState;
+      return [...data].sort((a, b) => {{
+        let va, vb;
+        if (key === 'date') {{ va = a.date + a.time; vb = b.date + b.time; }}
+        else {{ va = a[key] || 0; vb = b[key] || 0; }}
+        if (typeof va === 'number') return dir === 'asc' ? va - vb : vb - va;
+        return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+      }});
+    }}
+
+    function updateSortHeaders() {{
+      document.querySelectorAll('th.sortable').forEach(th => {{
+        const arrow = th.querySelector('.sort-arrow');
+        if (th.dataset.sort === sortState.key) {{
+          arrow.innerHTML = sortState.dir === 'asc' ? ' &#9650;' : ' &#9660;';
+        }} else {{
+          arrow.textContent = '';
+        }}
+      }});
+    }}
 
     function render(filtered) {{
+      currentFiltered = filtered;
+      const sorted = sortData(filtered);
       const body = document.getElementById('sessionBody');
-      body.innerHTML = filtered.map(s => {{
-        const desc = s.summary || s.title || '-';
-        const truncDesc = desc.length > 60 ? desc.slice(0, 57) + '...' : desc;
-        const catClass = {{
-          'development': 'tag-dev', 'configuration': 'tag-config',
-          'debugging': 'tag-debug', 'writing': 'tag-writing',
-          'analysis': 'tag-analysis', 'learning': 'tag-learning',
-          'organization': 'tag-org', 'discussion': 'tag-dev'
-        }}[s.category] || 'tag-dev';
-        return `<tr>
+      body.innerHTML = sorted.map((s, i) => {{
+        let summaryCell, catCell;
+        if (s.has_summary) {{
+          const trunc = s.summary.length > 80 ? s.summary.slice(0, 77) + '...' : s.summary;
+          summaryCell = `<span title="${{esc(s.summary)}}">${{esc(trunc)}}</span>`;
+          catCell = s.category ? `<span class="tag ${{CAT_CLASS[s.category] || 'tag-dev'}}">${{s.category}}</span>` : '';
+        }} else {{
+          const t = s.title || '-';
+          const trunc = t.length > 50 ? t.slice(0, 47) + '...' : t;
+          summaryCell = `<span class="tag tag-unsummarized">未摘要</span> <span class="unsummarized">${{esc(trunc)}}</span>`;
+          catCell = '';
+        }}
+
+        // Delete recommendation
+        let recTag = '';
+        if (API_MODE) {{
+          if (s.has_summary && s.learnings && s.learnings.length) {{
+            recTag = '<span class="tag tag-deletable" title="摘要+经验已提取，可安全删除">可删</span> ';
+          }} else if (s.msgs < 5) {{
+            recTag = '<span class="tag tag-low" title="消息过少，低价值">低价值</span> ';
+          }}
+          summaryCell = recTag + summaryCell;
+        }}
+
+        let expandRow = '';
+        if (s.has_summary) {{
+          let ec = `<h4>Summary</h4><p>${{esc(s.summary)}}</p>`;
+          if (s.outcomes) ec += `<h4>Outcomes</h4><p>${{esc(s.outcomes)}}</p>`;
+          if (s.learnings && s.learnings.length) {{
+            ec += `<h4>Learnings</h4><ul>${{s.learnings.map(l => '<li>' + esc(l) + '</li>').join('')}}</ul>`;
+          }}
+          expandRow = `<tr class="expand-row" id="expand-${{i}}" style="display:none"><td colspan="${{API_MODE ? 7 : 6}}"><div class="expand-content">${{ec}}</div></td></tr>`;
+        }}
+
+        const actionsCell = API_MODE ? `<td class="actions"><input type="checkbox" class="row-select" data-id="${{s.id}}"></td>` : '';
+
+        return `<tr class="${{s.has_summary ? 'expandable' : ''}}" data-expand="${{i}}">
           <td><a href="sessions/${{s.id}}.html">${{s.date}} ${{s.time}}</a></td>
           <td class="project">${{s.project}}</td>
           <td class="duration">${{s.duration}}m</td>
           <td class="msgs">${{s.msgs}}</td>
-          <td>${{s.category ? `<span class="tag ${{catClass}}">${{s.category}}</span>` : ''}}</td>
-          <td>${{truncDesc}}</td>
-        </tr>`;
+          <td>${{catCell}}</td>
+          <td>${{summaryCell}}</td>
+          ${{actionsCell}}
+        </tr>${{expandRow}}`;
       }}).join('');
     }}
 
@@ -180,19 +270,116 @@ def _generate_index(sessions: list, stats: dict, output_dir: Path):
         (s.summary + s.title + s.project).toLowerCase().includes(q)
       );
       render(f);
+      updateSortHeaders();
     }}
+
+    // Sort click handlers
+    document.querySelectorAll('th.sortable').forEach(th => {{
+      th.addEventListener('click', () => {{
+        const key = th.dataset.sort;
+        if (sortState.key === key) {{
+          sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        }} else {{
+          sortState = {{ key, dir: key === 'date' ? 'desc' : 'desc' }};
+        }}
+        render(currentFiltered);
+        updateSortHeaders();
+      }});
+    }});
+
+    // Expand row click handler (event delegation)
+    document.getElementById('sessionBody').addEventListener('click', (e) => {{
+      const row = e.target.closest('tr.expandable');
+      if (!row || e.target.closest('a')) return;
+      const idx = row.dataset.expand;
+      const expandRow = document.getElementById('expand-' + idx);
+      if (expandRow) {{
+        expandRow.style.display = expandRow.style.display === 'none' ? '' : 'none';
+        row.classList.toggle('expanded');
+      }}
+    }});
 
     document.getElementById('filterDate').addEventListener('change', applyFilters);
     document.getElementById('filterProject').addEventListener('change', applyFilters);
     document.getElementById('filterCategory').addEventListener('change', applyFilters);
     document.getElementById('filterSearch').addEventListener('input', applyFilters);
 
+    function updateBulkBar() {{
+      const checked = document.querySelectorAll('.row-select:checked');
+      const bar = document.getElementById('bulkBar');
+      if (!bar) return;
+      if (checked.length > 0) {{
+        bar.style.display = 'flex';
+        document.getElementById('selectedCount').textContent = checked.length;
+      }} else {{
+        bar.style.display = 'none';
+      }}
+    }}
+
+    async function deleteIds(ids) {{
+      let ok = 0;
+      for (const id of ids) {{
+        try {{
+          const r = await fetch('/api/delete', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ session_id: id }})
+          }});
+          const data = await r.json();
+          if (data.deleted) {{
+            const idx = sessions.findIndex(s => s.id === id);
+            if (idx !== -1) sessions.splice(idx, 1);
+            ok++;
+          }}
+        }} catch(e) {{}}
+      }}
+      return ok;
+    }}
+
+    if (API_MODE) {{
+      // Select all checkbox
+      document.getElementById('selectAll').addEventListener('change', (e) => {{
+        document.querySelectorAll('.row-select').forEach(cb => cb.checked = e.target.checked);
+        updateBulkBar();
+      }});
+
+      // Individual checkbox change (event delegation)
+      document.getElementById('sessionBody').addEventListener('change', (e) => {{
+        if (e.target.classList.contains('row-select')) updateBulkBar();
+      }});
+
+      // Bulk delete button
+      document.getElementById('bulkDeleteBtn').addEventListener('click', async () => {{
+        const checked = document.querySelectorAll('.row-select:checked');
+        const ids = Array.from(checked).map(cb => cb.dataset.id);
+        if (!ids.length) return;
+        if (!confirm(`确定删除 ${{ids.length}} 个会话？`)) return;
+        const btn = document.getElementById('bulkDeleteBtn');
+        btn.disabled = true;
+        btn.textContent = '删除中...';
+        const ok = await deleteIds(ids);
+        btn.disabled = false;
+        btn.textContent = '批量删除';
+        document.getElementById('selectAll').checked = false;
+        applyFilters();
+        updateBulkBar();
+        updateStats();
+      }});
+    }}
+
     render(sessions);
+    updateSortHeaders();
   </script>
 </body>
 </html>"""
 
     (output_dir / "index.html").write_text(html, encoding="utf-8")
+
+    # API mode: write sessions data as separate JSON file
+    if api_mode:
+        (output_dir / "sessions.json").write_text(
+            json.dumps(session_data, ensure_ascii=False), encoding="utf-8"
+        )
 
 
 def _generate_session_pages(sessions: list, output_dir: Path):

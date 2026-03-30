@@ -109,5 +109,46 @@ nav a:hover, nav a.active { color: var(--accent); }
 .digest-session h3 { font-size: 16px; margin-bottom: 8px; }
 .digest-session .time { color: var(--text-muted); font-size: 13px; }
 
+/* Sortable Headers */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--accent); }
+.sort-arrow { font-size: 10px; margin-left: 2px; }
+
+/* Unsummarized */
+.unsummarized { color: var(--text-muted); font-style: italic; }
+.tag-unsummarized { background: #1e1e2e; color: #666; }
+
+/* Checkbox & Bulk Actions */
+th.actions, td.actions { text-align: center; width: 40px; }
+.row-select { cursor: pointer; }
+.bulk-bar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 16px; margin: 12px 0;
+  position: sticky; bottom: 16px; z-index: 10;
+}
+.bulk-bar span { color: var(--text); font-size: 14px; }
+.btn-bulk-delete {
+  background: var(--red); color: #fff; border: none;
+  border-radius: 4px; padding: 6px 16px; cursor: pointer; font-size: 13px;
+}
+.btn-bulk-delete:hover { opacity: 0.85; }
+.btn-bulk-delete:disabled { opacity: 0.4; cursor: default; }
+
+/* Delete Recommendation Tags */
+.tag-deletable { background: #1a3b2f; color: #22c55e; }
+.tag-low { background: #2a2a2a; color: #777; }
+
+/* Expandable Rows */
+tr.expandable { cursor: pointer; }
+tr.expandable:hover td { background: var(--bg-hover); }
+tr.expanded td { border-bottom: none; }
+.expand-row td { padding: 0 16px 16px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); }
+.expand-content { font-size: 13px; line-height: 1.7; padding: 8px 12px; }
+.expand-content h4 { color: var(--text-muted); font-size: 12px; text-transform: uppercase; margin: 10px 0 4px; }
+.expand-content h4:first-child { margin-top: 0; }
+.expand-content ul { padding-left: 20px; margin: 4px 0; }
+.expand-content li { margin: 2px 0; }
+
 /* Footer */
 footer { text-align: center; padding: 32px 0; color: var(--text-muted); font-size: 13px; border-top: 1px solid var(--border); margin-top: 48px; }

@@ -378,8 +378,8 @@ class Indexer:
         if delete_files and session.file_path:
             fp = Path(session.file_path)
 
-            # Delete .jsonl file
-            if fp.exists():
+            # Delete .jsonl file (safety: only delete actual files, not directories)
+            if fp.is_file() and fp.suffix == ".jsonl":
                 fp.unlink()
 
             # Delete associated subdirectory (subagents/, tool-results/)

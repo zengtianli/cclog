@@ -49,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     p_sum.add_argument("session_id", nargs="?", help="Session ID (or summarize all unsummarized)")
     p_sum.add_argument("--since", help="Summarize sessions since date")
     p_sum.add_argument("--backend", choices=["claude-cli", "api"], default="claude-cli")
+    p_sum.add_argument("--model", "-m", default=None, help="Model to use (e.g. haiku, sonnet)")
     p_sum.add_argument("--limit", "-n", type=int, default=10, help="Max sessions to summarize")
+    p_sum.add_argument("--workers", "-w", type=int, default=4, help="Parallel workers (default: 4)")
     p_sum.set_defaults(func=cmd_summarize)
 
     # --- digest (placeholder for Phase 3) ---
@@ -74,7 +76,20 @@ def main(argv: list[str] | None = None) -> int:
     p_site = subparsers.add_parser("site", help="Generate static HTML site")
     p_site.add_argument("--output", "-o", type=str, default="./cclog-site", help="Output directory")
     p_site.add_argument("--open", action="store_true", help="Open in browser after generating")
+    p_site.add_argument("--api", action="store_true", help="Enable delete buttons (for VPS deploy)")
     p_site.set_defaults(func=cmd_site)
+
+    # --- sync ---
+    p_sync = subparsers.add_parser("sync", help="Fetch VPS delete queue, process locally, redeploy")
+    p_sync.add_argument("--vps", default="root@104.218.100.67", help="VPS SSH target")
+    p_sync.add_argument("--queue", default="/var/www/cclog-site/pending_deletes.json", help="VPS queue file path")
+    p_sync.add_argument("--site-dir", default="/var/www/cclog-site", help="VPS site directory")
+    p_sync.set_defaults(func=cmd_sync)
+
+    # --- serve ---
+    p_serve = subparsers.add_parser("serve", help="Serve dashboard with live API (delete, etc.)")
+    p_serve.add_argument("--port", "-p", type=int, default=8899, help="Port (default: 8899)")
+    p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
 
@@ -178,16 +193,20 @@ def cmd_stats(args) -> int:
 
 
 def cmd_summarize(args) -> int:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
     from cclog.summarizer import summarize_session
 
     config = load_config()
     if args.backend:
         config.llm_backend = args.backend
+    if args.model:
+        config.llm_model = args.model
 
     indexer = Indexer(config)
 
     if args.session_id:
-        # Summarize single session
         session = indexer.get_session(args.session_id)
         if not session:
             print(f"Session not found: {args.session_id}")
@@ -202,26 +221,35 @@ def cmd_summarize(args) -> int:
         indexer.close()
         return 0
 
-    print(f"Summarizing {len(sessions)} session(s) via {config.llm_backend}...\n")
+    workers = max(1, args.workers)
+    print(f"Summarizing {len(sessions)} session(s) via {config.llm_backend} ({workers} workers)...\n")
 
     success = 0
-    for i, s in enumerate(sessions, 1):
-        label = s.summary and "(re-summarize)" or ""
-        print(f"  [{i}/{len(sessions)}] {s.project} {s.start_time.strftime('%Y-%m-%d') if s.start_time else '?'} {label}")
+    lock = threading.Lock()
+    done_count = 0
 
-        result = summarize_session(s, config)
-        if result:
-            indexer.update_summary(
-                s.session_id,
-                result["summary"],
-                result["category"],
-                result["outcomes"],
-                result["learnings"],
-            )
-            print(f"    -> {result['summary'][:60]}")
-            success += 1
-        else:
-            print("    -> (failed)")
+    def _do_summarize(s):
+        return s, summarize_session(s, config)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_do_summarize, s): s for s in sessions}
+        for future in as_completed(futures):
+            s, result = future.result()
+            done_count += 1
+            label = s.start_time.strftime('%Y-%m-%d') if s.start_time else '?'
+            if result:
+                with lock:
+                    indexer.update_summary(
+                        s.session_id,
+                        result["summary"],
+                        result["category"],
+                        result["outcomes"],
+                        result["learnings"],
+                    )
+                    success += 1
+                print(f"  [{done_count}/{len(sessions)}] {s.project} {label} -> {result['summary'][:60]}")
+            else:
+                print(f"  [{done_count}/{len(sessions)}] {s.project} {label} -> (failed)")
 
     indexer.close()
     print(f"\nDone: {success}/{len(sessions)} summarized")
@@ -338,12 +366,64 @@ def cmd_site(args) -> int:
 
     config = load_config()
     output_dir = Path(args.output).resolve()
-    generate_site(config, output_dir)
+    generate_site(config, output_dir, api_mode=args.api)
 
     if args.open:
         index_path = output_dir / "index.html"
         webbrowser.open(f"file://{index_path}")
 
+    return 0
+
+
+def cmd_sync(args) -> int:
+    """Fetch VPS delete queue, process locally, redeploy."""
+    import subprocess
+    from pathlib import Path
+
+    vps = args.vps
+    queue_path = args.queue
+    site_dir = args.site_dir
+
+    # 1. Fetch pending deletes from VPS
+    print("Fetching delete queue from VPS...")
+    result = subprocess.run(
+        ["ssh", vps, f"cat {queue_path} 2>/dev/null || echo '[]'"],
+        capture_output=True, text=True, timeout=15,
+    )
+    queue = json.loads(result.stdout.strip() or "[]")
+
+    if not queue:
+        print("No pending deletes.")
+        return 0
+
+    print(f"Found {len(queue)} pending deletion(s):")
+
+    # 2. Delete each session locally
+    config = load_config()
+    indexer = Indexer(config)
+    deleted = 0
+    for sid in queue:
+        session = indexer.get_session(sid)
+        if session:
+            print(f"  Deleting: {session.project} {session.start_time.strftime('%Y-%m-%d') if session.start_time else '?'}")
+            indexer.delete_session(sid, delete_files=True)
+            deleted += 1
+        else:
+            print(f"  Skipped (already deleted): {sid[:12]}...")
+    indexer.close()
+
+    # 3. Clear VPS queue (VPS already updated sessions.json + removed detail pages)
+    subprocess.run(["ssh", vps, f"echo '[]' > {queue_path}"], timeout=10)
+
+    print(f"\nDone! Deleted {deleted} local session(s).")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    from cclog.server import serve_dashboard
+
+    config = load_config()
+    serve_dashboard(config, port=args.port)
     return 0
 
 
