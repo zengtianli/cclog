@@ -17,7 +17,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Topic :: Software Development :: Documentation",
 ]
-dependencies = []
+dependencies = ["mcp[cli]>=1.0.0"]
 
 [project.optional-dependencies]
 api = ["anthropic>=0.40.0"]
