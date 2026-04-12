@@ -43,11 +43,34 @@ cclog delete <id>              # 删除单条会话
 pytest tests/
 ```
 
+## MCP Server
+
+cclog 通过 MCP 向 Claude Code 暴露会话搜索能力，CC 在对话中可直接调用。
+
+| 项目 | 值 |
+|------|-----|
+| 入口 | `src/cclog/mcp_server.py` |
+| 注册方式 | `claude mcp add cclog /Users/tianli/miniforge3/bin/python3 /Users/tianli/Dev/cclog/src/cclog/mcp_server.py` |
+| 配置写入 | `~/.claude.json` 的 `mcpServers.cclog`（**不是** `.mcp.json`） |
+| 验证 | `claude mcp list` 应显示 `cclog: ✓ Connected` |
+
+**提供的 MCP 工具**：
+
+| 工具 | 用途 |
+|------|------|
+| `search_sessions` | 按项目名/关键词/日期/分类搜索会话 |
+| `get_session_detail` | 按 session_id（前缀匹配）获取完整详情 |
+| `get_session_stats` | 总体统计（会话数、项目数、时长、token） |
+| `get_daily_digest` | 指定日期的 Markdown 格式日报 |
+
+**注意**：添加/修改 MCP 后需重启 CC 会话才能使用新工具。
+
 ## 项目结构
 
 ```
 src/cclog/
 ├── cli.py          # 所有子命令入口（main()）
+├── mcp_server.py   # MCP server（FastMCP，4 tools）
 ├── server.py       # cclog site 的本地 HTTP server
 └── __main__.py     # python -m cclog 支持
 
