@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -180,6 +181,113 @@ def get_daily_digest(date: str | None = None) -> str:
             return format_digest_markdown(digest)
         finally:
             indexer.close()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML frontmatter from markdown text. Returns (metadata, content)."""
+    if not text.startswith("---"):
+        return {}, text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}, text
+    meta = {}
+    for line in parts[1].strip().splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    content = parts[2].strip()
+    return meta, content
+
+
+def _dir_to_project(dirname: str) -> str:
+    """Convert directory name like '-Users-tianli-Dev-cclog' to 'Dev/cclog'."""
+    prefix = "-Users-tianli-"
+    name = dirname
+    if name.startswith(prefix):
+        name = name[len(prefix):]
+    return name.replace("-", "/")
+
+
+@mcp.tool()
+def search_memories(
+    query: str,
+    type: str | None = None,
+    project: str | None = None,
+) -> str:
+    """Search memory files across all Claude Code projects.
+
+    Memory files contain persistent knowledge, user preferences, project notes,
+    and feedback accumulated across Claude Code sessions.
+
+    Args:
+        query: Keyword to search in memory content, name, or description (case-insensitive).
+        type: Filter by memory type: "user", "feedback", "project", "reference" (optional).
+        project: Filter by project name, substring match on directory path (optional).
+
+    Returns:
+        JSON list of matching memories sorted by relevance.
+    """
+    try:
+        base = Path.home() / ".claude" / "projects"
+        if not base.exists():
+            return json.dumps([])
+
+        q = query.lower()
+        results = []
+
+        for memory_dir in base.glob("*/memory"):
+            project_dir = memory_dir.parent.name
+            project_name = _dir_to_project(project_dir)
+
+            # Project filter
+            if project and project.lower() not in project_name.lower():
+                continue
+
+            for md_file in memory_dir.glob("*.md"):
+                # Skip MEMORY.md index files
+                if md_file.name == "MEMORY.md":
+                    continue
+
+                try:
+                    text = md_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+                meta, content = _parse_frontmatter(text)
+
+                # Type filter
+                if type and meta.get("type", "").lower() != type.lower():
+                    continue
+
+                # Compute relevance score
+                name = meta.get("name", "")
+                description = meta.get("description", "")
+                score = 0
+                if q in name.lower():
+                    score += 3
+                if q in description.lower():
+                    score += 2
+                if q in content.lower():
+                    score += 1
+
+                if score == 0:
+                    continue
+
+                results.append({
+                    "file_path": str(md_file),
+                    "project": project_name,
+                    "name": name,
+                    "description": description,
+                    "type": meta.get("type", ""),
+                    "content": content,
+                    "relevance": score,
+                })
+
+        # Sort by relevance descending, then by name
+        results.sort(key=lambda r: (-r["relevance"], r["name"]))
+        return json.dumps(results[:10], ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
