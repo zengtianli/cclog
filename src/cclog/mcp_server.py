@@ -1,6 +1,7 @@
 """MCP server exposing cclog session search/retrieval to Claude Code."""
 
 import json
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -13,11 +14,26 @@ from cclog.models import Session
 
 mcp = FastMCP("cclog", instructions="Search and retrieve Claude Code session history from the cclog database.")
 
+_last_indexed: float = 0.0
+_FRESHNESS_TTL = 300  # 5 minutes
 
-def _get_indexer() -> Indexer:
-    """Create an Indexer instance from default config."""
+
+def _get_indexer(ensure_fresh: bool = True) -> tuple[Indexer, bool]:
+    """Create an Indexer instance, auto-refreshing if stale.
+
+    Returns (indexer, was_refreshed).
+    """
+    global _last_indexed
     config = load_config()
-    return Indexer(config)
+    indexer = Indexer(config)
+    was_refreshed = False
+
+    if ensure_fresh and (time.time() - _last_indexed) > _FRESHNESS_TTL:
+        indexer.build()
+        _last_indexed = time.time()
+        was_refreshed = True
+
+    return indexer, was_refreshed
 
 
 def _session_to_dict(s: Session, brief: bool = True) -> dict:
@@ -79,7 +95,7 @@ def search_sessions(
         JSON list of matching sessions with key fields.
     """
     try:
-        indexer = _get_indexer()
+        indexer, was_refreshed = _get_indexer()
         try:
             # Use query as project filter if provided
             sessions = indexer.list_sessions(
@@ -102,7 +118,16 @@ def search_sessions(
                 ][:limit]
 
             results = [_session_to_dict(s, brief=True) for s in sessions]
-            return json.dumps(results, ensure_ascii=False, indent=2)
+            total = indexer.conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            output = {
+                "_meta": {
+                    "db_last_indexed": indexer.get_last_indexed_at(),
+                    "total_sessions": total,
+                    "auto_refreshed": was_refreshed,
+                },
+                "sessions": results,
+            }
+            return json.dumps(output, ensure_ascii=False, indent=2)
         finally:
             indexer.close()
     except Exception as e:
@@ -120,7 +145,7 @@ def get_session_detail(session_id: str) -> str:
         JSON with all session fields including summary, outcomes, learnings, tokens.
     """
     try:
-        indexer = _get_indexer()
+        indexer, _ = _get_indexer()
         try:
             session = indexer.get_session(session_id)
             if not session:
@@ -140,7 +165,7 @@ def get_session_stats() -> str:
         JSON with total sessions, projects, hours, tokens, date range.
     """
     try:
-        indexer = _get_indexer()
+        indexer, _ = _get_indexer()
         try:
             stats = indexer.get_stats()
             total_minutes = stats.get("total_minutes") or 0
@@ -172,7 +197,7 @@ def get_daily_digest(date: str | None = None) -> str:
         Markdown formatted daily digest.
     """
     try:
-        indexer = _get_indexer()
+        indexer, _ = _get_indexer()
         try:
             target = parse_date_arg(date) if date else parse_date_arg("today")
             digest = build_daily_digest(indexer, target)
@@ -288,6 +313,54 @@ def search_memories(
         # Sort by relevance descending, then by name
         results.sort(key=lambda r: (-r["relevance"], r["name"]))
         return json.dumps(results[:10], ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def search_knowledge(
+    query: str,
+    sources: str | None = None,
+) -> str:
+    """Search across all CC knowledge stores: memories, skill tracker, tasks, and feedback logs.
+
+    Unified search that queries 4 data sources simultaneously and returns
+    ranked results. Use this when you need to find information that might
+    be in any of the CC knowledge stores.
+
+    Args:
+        query: Keyword to search across all sources (case-insensitive).
+        sources: Comma-separated source filter: "memory,skills,tasks,reflect" (optional, defaults to all).
+
+    Returns:
+        JSON list of matching results sorted by relevance, each with source, title, content, date.
+    """
+    try:
+        from cclog.knowledge import search_knowledge as _search
+
+        source_list = [s.strip() for s in sources.split(",")] if sources else None
+        results = _search(query, source_list)
+        return json.dumps(results, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_evolution_status() -> str:
+    """Get CC ecosystem health report: stale memories, unused commands, matured skill candidates.
+
+    Use this to check the overall health of the Claude Code configuration ecosystem.
+    Returns actionable items: memories that need verification, commands with zero usage,
+    and skill candidates ready for promotion.
+
+    Returns:
+        JSON with stale_memories, unused_commands, matured_candidates, memory_stats.
+    """
+    try:
+        from cclog.knowledge import get_evolution_status as _status
+
+        result = _status()
+        return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

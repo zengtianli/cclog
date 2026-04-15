@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cclog.config import Config
@@ -41,6 +42,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_start_time ON sessions(start_time);
 CREATE INDEX IF NOT EXISTS idx_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_category ON sessions(category);
+
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -103,6 +109,10 @@ class Indexer:
             self._upsert_session(session, preserve_summary=True)
             new_count += 1
 
+        self.conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_indexed_at', ?)",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
         self.conn.commit()
         return len(scanned), new_count + bootstrapped, skip_count
 
@@ -224,6 +234,13 @@ class Indexer:
                 s.mtime,
             ),
         )
+
+    def get_last_indexed_at(self) -> str | None:
+        """Return ISO timestamp of the last successful index run."""
+        row = self.conn.execute(
+            "SELECT value FROM metadata WHERE key = 'last_indexed_at'"
+        ).fetchone()
+        return row[0] if row else None
 
     # --- Query ---
 
