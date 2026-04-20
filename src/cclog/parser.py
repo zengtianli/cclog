@@ -251,7 +251,7 @@ def _parse_timestamp(ts_str: str) -> datetime | None:
 def _derive_project_name(cwd: str) -> str:
     """Derive a short project name from the cwd path.
 
-    Example: "/Users/tianli/Dev/scripts" -> "Dev/scripts"
+    Example: "/Users/tianli/Dev/tools/scripts" -> "Dev/scripts"
     """
     if not cwd:
         return "unknown"

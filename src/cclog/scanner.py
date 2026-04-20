@@ -60,7 +60,7 @@ def scan_projects(projects_dir: Path) -> list[ScannedFile]:
 def decode_project_dir(encoded: str) -> str:
     """Decode project directory name to a readable path.
 
-    Example: "-Users-tianli-Dev-scripts" -> "/Users/tianli/Dev/scripts"
+    Example: "-Users-tianli-Dev-scripts" -> "/Users/tianli/Dev/tools/scripts"
 
     This is a heuristic — the actual cwd from the JSONL is more reliable.
     """

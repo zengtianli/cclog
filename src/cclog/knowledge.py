@@ -15,10 +15,10 @@ from pathlib import Path
 
 
 MEMORY_BASE = Path.home() / ".claude" / "projects"
-SKILL_TRACKER = Path.home() / "Dev" / "cc-configs" / "skill-tracker.json"
-TASKS_FILE = Path.home() / "Dev" / "configs" / "tasks.json"
+SKILL_TRACKER = Path.home() / "Dev" / "tools" / "cc-configs" / "skill-tracker.json"
+TASKS_FILE = Path.home() / "Dev" / "tools" / "configs" / "tasks.json"
 REFLECT_LOG = Path.home() / "Dev" / "devtools" / "logs" / "reflect-flags.log"
-SKILL_CANDIDATES = Path.home() / "Dev" / "cc-configs" / "skill-candidates.md"
+SKILL_CANDIDATES = Path.home() / "Dev" / "tools" / "cc-configs" / "skill-candidates.md"
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
